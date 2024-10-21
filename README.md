@@ -24,6 +24,10 @@ Este projeto é uma arquitetura de integração de dados que utiliza Kafka, Post
 3. **Configuração dos Serviços**:
    - O arquivo `docker-compose.yml` define todos os serviços necessários. Certifique-se de que as portas necessárias estão livres.
 
+4. **Efetuar Download dos Dados**:
+   - Efetue o download dos dados das bases de dados e coloque na pasta `database/bases`. 
+   - link para dados de exemplo: https://www.kaggle.com/datasets/bytadit/ecommerce-order-dataset
+
 ## Execução
 
 1. **Iniciar os Serviços**:

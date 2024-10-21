@@ -1,0 +1,137 @@
+version: '3'
+
+services:
+  ecommerce_db:
+   image: postgres:latest
+   container_name: ecommerce_db
+   hostname: ecommerce_db
+   environment:
+     POSTGRES_USER: ${POSTGRES_USER}
+     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+     POSTGRES_DB: ${POSTGRES_DB}
+   healthcheck:
+     test:
+       [
+         'CMD',
+         'pg_isready',
+         '-d',
+         '${POSTGRES_DB}',
+         '-U',
+         '${POSTGRES_USER}'
+       ]
+   networks:
+     - cdc_project
+   ports:
+     - '5433:5432'
+   volumes:
+     - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  zookeeper:
+    container_name: zookeeper
+    image: quay.io/debezium/zookeeper:2.3.4.Final
+    networks:
+      - cdc_project
+    ports:
+      - 2181:2181
+      - 2888:2888
+      - 3888:3888
+
+  kafka:
+    container_name: kafka
+    image: quay.io/debezium/kafka:2.3.4.Final
+    ports:
+      - 9093:9092
+    networks:
+      - cdc_project
+    links:
+      - zookeeper
+    environment:
+      - ZOOKEEPER_CONNECT=zookeeper:2181
+
+  connect:
+    container_name: debezium
+    build: 
+      context: ./containers/debezium
+      dockerfile: Dockerfile
+    ports:
+      - 8083:8083
+    networks:
+      - cdc_project
+    links:
+      - kafka
+      - ecommerce_db
+    environment:
+      - BOOTSTRAP_SERVERS=kafka:9092
+      - GROUP_ID=1
+      - CONFIG_STORAGE_TOPIC=my_connect_configs
+      - OFFSET_STORAGE_TOPIC=my_connect_offsets
+      - STATUS_STORAGE_TOPIC=my_connect_statuses
+    
+  minio:
+    container_name: minio_cdc
+    image: minio/minio
+    hostname: minio
+    ports: 
+      - '9000:9000'
+      - '9001:9001'
+    environment:
+      MINIO_ACCESS_KEY: minio
+      MINIO_SECRET_KEY: minio123
+    networks:
+      - cdc_project
+    volumes:
+      - ./lakehouse:/data
+    links:
+      - spark-master
+    command: server /data --console-address ":9001"
+
+  spark-master:
+    build: 
+      context: ./containers/spark
+      dockerfile: Dockerfile
+    container_name: "spark-master"
+    environment:
+      - SPARK_MODE=master
+      - SPARK_LOCAL_IP=spark-master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+    networks:
+      - cdc_project
+  spark-worker:
+    image: bitnami/spark:3.5.0
+    container_name: "spark-worker-1"
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=1
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    ports:
+      - "9091:8081"
+      - "7000:7000"
+    networks:
+      - cdc_project
+ 
+  jupyter:
+    image: jupyter/pyspark-notebook:x86_64-spark-3.5.0
+    container_name: "jupyter"
+    environment:
+      - PYSPARK_SUBMIT_ARGS=--packages io.delta:delta-spark_2.12:3.2.0,org.apache.hadoop:hadoop-aws:3.3.4 --master spark://spark-master:7077 pyspark-shell
+    ports:
+      - "8888:8888"
+      - "8887:4040"
+    volumes:
+      - ./notebooks:/home/jovyan/work
+    networks:
+      - cdc_project
+networks:
+  cdc_project:
+    driver: bridge
